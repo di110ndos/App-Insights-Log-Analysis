@@ -1,0 +1,45 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-gray-950 text-gray-100 text-sm antialiased;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+  }
+
+  * {
+    @apply border-gray-700;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white font-medium text-sm transition-colors;
+  }
+
+  .input-file {
+    @apply block w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-500 file:cursor-pointer cursor-pointer;
+  }
+
+  .card {
+    @apply bg-gray-850 border border-gray-700 rounded-lg shadow-lg;
+  }
+}
+
+/* AG Grid Dark Theme Overrides */
+.ag-theme-alpine-dark {
+  --ag-background-color: #1a1d23;
+  --ag-header-background-color: #0d0f12;
+  --ag-odd-row-background-color: #1a1d23;
+  --ag-row-hover-color: #252930;
+  --ag-selected-row-background-color: #1e3a5f;
+  --ag-border-color: #374151;
+  --ag-font-size: 12px;
+  --ag-row-height: 32px;
+  --ag-header-height: 36px;
+}
