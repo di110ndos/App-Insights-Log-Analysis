@@ -41,6 +41,7 @@ export interface FilterState {
   searchText: string;
   searchColumn: string;
   patternIds: number[] | null; // Filter to specific log IDs from pattern
+  serverRoles: string[]; // Filter by server role: CM, CD, XP, Other
 }
 
 export interface ErrorPattern {

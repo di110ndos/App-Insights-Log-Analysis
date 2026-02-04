@@ -14,6 +14,7 @@ import { ChartDataPoint, TimeWindow, LogEntry } from '../types';
 
 interface LogChartProps {
   logs: LogEntry[];
+  allLogs?: LogEntry[];  // All logs for timeline structure
   patternIds?: number[] | null;
   onBarClick: (window: TimeWindow) => void;
   selectedTimeWindow?: TimeWindow | null;
@@ -31,7 +32,8 @@ const GRANULARITY_OPTIONS: { value: TimeGranularity; label: string; ms: number }
   { value: '1d', label: '1 day', ms: 24 * 60 * 60 * 1000 },
 ];
 
-export default function LogChart({ logs, patternIds, onBarClick, selectedTimeWindow }: LogChartProps) {
+export default function LogChart({ logs, allLogs, patternIds, onBarClick, selectedTimeWindow }: LogChartProps) {
+  const timelineLogs = allLogs || logs;
   const [selecting, setSelecting] = useState(false);
   const [selectionStart, setSelectionStart] = useState<string | null>(null);
   const [selectionEnd, setSelectionEnd] = useState<string | null>(null);
@@ -44,14 +46,15 @@ export default function LogChart({ logs, patternIds, onBarClick, selectedTimeWin
   // Create highlighted IDs set for pattern highlighting
   const highlightedIds = useMemo(() => new Set(patternIds || []), [patternIds]);
 
-  // Create chart data directly from logs
+  // Create chart data: buckets from timelineLogs (all logs) for consistent x-axis,
+  // counts from logs (filtered logs) for bar heights
   const chartData = useMemo(() => {
-    const logsWithTime = logs.filter(l => l._timestamp);
-    if (logsWithTime.length === 0) return [];
+    const timelineLogsWithTime = timelineLogs.filter(l => l._timestamp);
+    if (timelineLogsWithTime.length === 0) return [];
 
+    // First, create all buckets from timelineLogs (ensures consistent x-axis)
     const buckets = new Map<number, ChartDataPoint>();
-
-    logsWithTime.forEach(log => {
+    timelineLogsWithTime.forEach(log => {
       const ts = log._timestamp!.getTime();
       const bucketTime = Math.floor(ts / bucketSize) * bucketSize;
 
@@ -67,16 +70,25 @@ export default function LogChart({ logs, patternIds, onBarClick, selectedTimeWin
           highlighted: 0
         });
       }
+    });
 
-      const bucket = buckets.get(bucketTime)!;
-      bucket.total++;
-      if (log._severity === 3) bucket.errors++;
-      else if (log._severity === 2) bucket.warnings++;
-      else if (log._severity === 1) bucket.info++;
-      else bucket.verbose++;
+    // Then, fill counts from filtered logs
+    const filteredLogsWithTime = logs.filter(l => l._timestamp);
+    filteredLogsWithTime.forEach(log => {
+      const ts = log._timestamp!.getTime();
+      const bucketTime = Math.floor(ts / bucketSize) * bucketSize;
 
-      if (highlightedIds.has(log._id)) {
-        bucket.highlighted = (bucket.highlighted || 0) + 1;
+      const bucket = buckets.get(bucketTime);
+      if (bucket) {
+        bucket.total++;
+        if (log._severity === 3) bucket.errors++;
+        else if (log._severity === 2) bucket.warnings++;
+        else if (log._severity === 1) bucket.info++;
+        else bucket.verbose++;
+
+        if (highlightedIds.has(log._id)) {
+          bucket.highlighted = (bucket.highlighted || 0) + 1;
+        }
       }
     });
 
@@ -107,7 +119,7 @@ export default function LogChart({ logs, patternIds, onBarClick, selectedTimeWin
         time: label
       };
     });
-  }, [logs, bucketSize, highlightedIds]);
+  }, [logs, timelineLogs, bucketSize, highlightedIds]);
 
   // Map time labels to timestamps for selection
   const timeToTimestamp = useMemo(() => {

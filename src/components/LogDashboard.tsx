@@ -35,7 +35,8 @@ export default function LogDashboard() {
     severities: [0, 1, 2, 3],
     searchText: '',
     searchColumn: '_all',
-    patternIds: null
+    patternIds: null,
+    serverRoles: ['CM', 'CD', 'XP', 'Other']
   });
 
   // Current file (first file for single mode)
@@ -86,7 +87,7 @@ export default function LogDashboard() {
 
       // Reset filters when loading new file
       if (slot === 0) {
-        setFilters({ timeWindow: null, severities: [0, 1, 2, 3], searchText: '', searchColumn: '_all', patternIds: null });
+        setFilters({ timeWindow: null, severities: [0, 1, 2, 3], searchText: '', searchColumn: '_all', patternIds: null, serverRoles: ['CM', 'CD', 'XP', 'Other'] });
         setSelectedPattern(null);
         setSelectedLog(null);
       }
@@ -115,6 +116,32 @@ export default function LogDashboard() {
     event.preventDefault();
   }, []);
 
+  // Helper to extract server role from customDimensions
+  const getInstanceRole = useCallback((log: LogEntry): string | null => {
+    const customDimCol = columns.find(c =>
+      c.toLowerCase().includes('customdimensions') || c.toLowerCase().includes('custom_dimensions')
+    );
+    if (!customDimCol || !log._raw[customDimCol]) return null;
+
+    try {
+      const dims = JSON.parse(log._raw[customDimCol]);
+      const instanceName = dims.InstanceName || dims.instanceName || '';
+      if (instanceName.includes('-CM')) return 'CM';
+      if (instanceName.includes('-CD')) return 'CD';
+      if (instanceName.includes('-XP')) return 'XP';
+      return 'Other';
+    } catch {
+      return null;
+    }
+  }, [columns]);
+
+  // Check if custom dimensions column exists
+  const hasCustomDimensions = useMemo(() => {
+    return columns.some(c =>
+      c.toLowerCase().includes('customdimensions') || c.toLowerCase().includes('custom_dimensions')
+    );
+  }, [columns]);
+
   // Filter logs
   const filteredLogs = useMemo(() => {
     return logs.filter(log => {
@@ -126,6 +153,12 @@ export default function LogDashboard() {
       }
 
       if (filters.patternIds && !filters.patternIds.includes(log._id)) return false;
+
+      // Server role filter (only apply if custom dimensions exist)
+      if (hasCustomDimensions && filters.serverRoles.length < 4) {
+        const role = getInstanceRole(log);
+        if (role && !filters.serverRoles.includes(role)) return false;
+      }
 
       if (filters.searchText) {
         const search = filters.searchText.toLowerCase();
@@ -140,7 +173,35 @@ export default function LogDashboard() {
 
       return true;
     });
-  }, [logs, filters]);
+  }, [logs, filters, hasCustomDimensions, getInstanceRole]);
+
+  // Filtered logs for chart (all filters except time window to preserve timeline context)
+  const chartFilteredLogs = useMemo(() => {
+    return logs.filter(log => {
+      if (!filters.severities.includes(log._severity)) return false;
+      if (filters.patternIds && !filters.patternIds.includes(log._id)) return false;
+
+      // Server role filter
+      if (hasCustomDimensions && filters.serverRoles.length < 4) {
+        const role = getInstanceRole(log);
+        if (role && !filters.serverRoles.includes(role)) return false;
+      }
+
+      // Search filter
+      if (filters.searchText) {
+        const search = filters.searchText.toLowerCase();
+        if (filters.searchColumn === '_all') {
+          const allText = Object.values(log._raw).join(' ').toLowerCase();
+          if (!allText.includes(search)) return false;
+        } else {
+          const value = String(log._raw[filters.searchColumn] || '').toLowerCase();
+          if (!value.includes(search)) return false;
+        }
+      }
+
+      return true;
+    });
+  }, [logs, filters.severities, filters.patternIds, filters.serverRoles, filters.searchText, filters.searchColumn, hasCustomDimensions, getInstanceRole]);
 
   const errorPatterns = useMemo(() => extractErrorPatterns(logs), [logs]);
 
@@ -193,8 +254,17 @@ export default function LogDashboard() {
     }));
   }, []);
 
+  const handleServerRoleToggle = useCallback((role: string) => {
+    setFilters(f => ({
+      ...f,
+      serverRoles: f.serverRoles.includes(role)
+        ? f.serverRoles.filter(r => r !== role)
+        : [...f.serverRoles, role]
+    }));
+  }, []);
+
   const clearFilters = useCallback(() => {
-    setFilters({ timeWindow: null, severities: [0, 1, 2, 3], searchText: '', searchColumn: '_all', patternIds: null });
+    setFilters({ timeWindow: null, severities: [0, 1, 2, 3], searchText: '', searchColumn: '_all', patternIds: null, serverRoles: ['CM', 'CD', 'XP', 'Other'] });
     setSelectedPattern(null);
   }, []);
 
@@ -373,7 +443,7 @@ export default function LogDashboard() {
                     </div>
                   )}
                 </div>
-                <LogChart logs={logs} patternIds={filters.patternIds} onBarClick={handleBarClick} selectedTimeWindow={filters.timeWindow} />
+                <LogChart logs={chartFilteredLogs} allLogs={logs} patternIds={filters.patternIds} onBarClick={handleBarClick} selectedTimeWindow={filters.timeWindow} />
               </div>
             )}
 
@@ -399,6 +469,30 @@ export default function LogDashboard() {
                     </button>
                   ))}
                 </div>
+
+                {hasCustomDimensions && (
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs text-gray-500 mr-2">Server Role:</span>
+                    {[
+                      { role: 'CM', label: 'CM', activeClass: 'bg-blue-900/50 text-blue-400 border border-blue-700' },
+                      { role: 'CD', label: 'CD', activeClass: 'bg-green-900/50 text-green-400 border border-green-700' },
+                      { role: 'XP', label: 'XP', activeClass: 'bg-purple-900/50 text-purple-400 border border-purple-700' },
+                      { role: 'Other', label: 'Other', activeClass: 'bg-gray-700/50 text-gray-400 border border-gray-600' }
+                    ].map(({ role, label, activeClass }) => (
+                      <button
+                        key={role}
+                        onClick={() => handleServerRoleToggle(role)}
+                        className={`px-2 py-1 text-xs rounded font-medium transition-colors ${
+                          filters.serverRoles.includes(role)
+                            ? activeClass
+                            : 'bg-gray-800 text-gray-600 border border-gray-700'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
 
                 <div className="flex items-center gap-2 flex-1 min-w-[300px]">
                   <select
