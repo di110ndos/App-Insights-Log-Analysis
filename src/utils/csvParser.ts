@@ -223,7 +223,10 @@ export function compareFiles(logs1: LogEntry[], logs2: LogEntry[]): ComparisonRe
         count: data.count,
         firstSeen: new Date(),
         lastSeen: new Date(),
-        ids: data.ids
+        ids: data.ids,
+        severity: 3,
+        errorCount: data.count,
+        warningCount: 0
       });
     }
   });
@@ -238,7 +241,10 @@ export function compareFiles(logs1: LogEntry[], logs2: LogEntry[]): ComparisonRe
         count: data2.count,
         firstSeen: new Date(),
         lastSeen: new Date(),
-        ids: data2.ids
+        ids: data2.ids,
+        severity: 3,
+        errorCount: data2.count,
+        warningCount: 0
       });
     } else {
       const change = ((data2.count - data1.count) / data1.count) * 100;
@@ -249,7 +255,10 @@ export function compareFiles(logs1: LogEntry[], logs2: LogEntry[]): ComparisonRe
           count: data2.count,
           firstSeen: new Date(),
           lastSeen: new Date(),
-          ids: data2.ids
+          ids: data2.ids,
+          severity: 3,
+          errorCount: data2.count,
+          warningCount: 0
         },
         file1Count: data1.count,
         file2Count: data2.count,

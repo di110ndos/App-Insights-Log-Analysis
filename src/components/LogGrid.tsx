@@ -104,7 +104,7 @@ export default function LogGrid({ logs, columns, onRowClick }: LogGridProps) {
     suppressMovable: false,
   }), []);
 
-  const onGridReady = useCallback((params: GridReadyEvent) => {
+  const onGridReady = useCallback((_params: GridReadyEvent) => {
     // Don't auto-fit, let columns use their defined widths
   }, []);
 

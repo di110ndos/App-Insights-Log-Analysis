@@ -178,7 +178,7 @@ export default function LogDashboard() {
     setActiveTab('grid');
   }, []);
 
-  const handleEndpointClick = useCallback((endpoint: string, logIds: number[]) => {
+  const handleEndpointClick = useCallback((_endpoint: string, logIds: number[]) => {
     setFilters(f => ({ ...f, patternIds: logIds, timeWindow: null }));
     setSelectedPattern(null);
     setActiveTab('grid');

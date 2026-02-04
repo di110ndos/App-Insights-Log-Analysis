@@ -40,7 +40,6 @@ export default function DetailDrawer({ log, onClose }: DetailDrawerProps) {
   };
 
   // Organize entries into groups
-  const coreFields = ['_timestamp', '_severity', '_message'];
   const rawEntries = Object.entries(log._raw || {}).filter(([_, v]) => v !== null && v !== undefined && v !== '');
 
   return (

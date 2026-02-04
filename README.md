@@ -2,6 +2,20 @@
 
 A high-performance React application for analyzing Azure Application Insights CSV log exports. Process and visualize logs entirely in the browser with no backend required.
 
+## Why Use This Tool?
+
+Azure App Insights excels at log collection and querying, but this tool fills gaps for **rapid triage and pattern recognition**:
+
+| Gap | Azure App Insights | This Tool |
+|-----|-------------------|-----------|
+| **Error Pattern Grouping** | Shows individual log entries | Normalizes messages (strips GUIDs, timestamps, IDs) to group similar errors automatically |
+| **Offline Analysis** | Requires live connection | Runs entirely in browser—data never leaves your machine |
+| **Visual Time Selection** | Requires KQL queries | Drag across chart to filter to specific time windows |
+| **API Health View** | Requires custom queries/workbooks | Auto-extracts `/api/` endpoints and shows error rates at a glance |
+| **Before/After Comparison** | Manual KQL comparison | Drag-and-drop two CSVs to see new errors, resolved issues, and trends |
+| **AI Root Cause Analysis** | Limited "Smart Detection" for anomalies | Send grouped patterns to Claude for actionable recommendations |
+| **Setup Required** | Configure workspaces, write KQL, build dashboards | Export CSV → Drop file → Get insights |
+
 ## Features
 
 ### Log Visualization
