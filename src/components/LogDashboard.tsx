@@ -344,8 +344,8 @@ export default function LogDashboard() {
       <header className="border-b border-gray-800 bg-gray-900/50 backdrop-blur sticky top-0 z-40">
         <div className="max-w-[1920px] mx-auto px-4 py-3 flex items-center justify-between">
           <div>
-            <h1 className="text-lg font-semibold text-gray-100">Log Analyzer</h1>
-            <p className="text-xs text-gray-500">Azure App Insights CSV Analysis</p>
+            <h1 className="text-lg font-semibold text-gray-100">Pulse</h1>
+            <p className="text-xs text-gray-500">Azure App Insights Log Analysis</p>
           </div>
           <div className="flex items-center gap-4">
             {/* Mode toggle */}
