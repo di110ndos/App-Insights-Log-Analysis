@@ -112,10 +112,15 @@ export default function LogChart({ logs, allLogs, patternIds, onBarClick, select
     // Sort and format time labels
     const sorted = Array.from(buckets.values()).sort((a, b) => a.timestamp - b.timestamp);
 
-    let lastDay = '';
+    // Determine if data spans multiple days
+    const firstDate = new Date(sorted[0].timestamp);
+    const lastDate = new Date(sorted[sorted.length - 1].timestamp);
+    const tzOpts = tzIana ? { timeZone: tzIana } : {};
+    const firstDay = firstDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...tzOpts });
+    const lastDay = lastDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...tzOpts });
+    const spansMultipleDays = firstDay !== lastDay;
     return sorted.map(bucket => {
       const date = new Date(bucket.timestamp);
-      const tzOpts = tzIana ? { timeZone: tzIana } : {};
       const day = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...tzOpts });
       const time = date.toLocaleTimeString('en-US', {
         hour: 'numeric',
@@ -124,11 +129,13 @@ export default function LogChart({ logs, allLogs, patternIds, onBarClick, select
         ...tzOpts
       });
 
-      // Show day only when it changes
+      // For day granularity, show date only (time is always midnight)
+      // For multi-day ranges, always include the date for clarity
       let label: string;
-      if (day !== lastDay) {
-        label = `${day} ${time}`;
-        lastDay = day;
+      if (granularity === '1d') {
+        label = day;
+      } else if (spansMultipleDays) {
+        label = `${day}\n${time}`;
       } else {
         label = time;
       }
@@ -138,7 +145,13 @@ export default function LogChart({ logs, allLogs, patternIds, onBarClick, select
         time: label
       };
     });
-  }, [logs, timelineLogs, bucketSize, highlightedIds, tzIana]);
+  }, [logs, timelineLogs, bucketSize, highlightedIds, tzIana, granularity]);
+
+  // Compute smart tick interval: aim for ~8-12 visible labels
+  const tickInterval = useMemo(() => {
+    if (chartData.length <= 12) return 0; // show all
+    return Math.max(1, Math.floor(chartData.length / 10));
+  }, [chartData]);
 
   // Map time labels to timestamps for selection
   const timeToTimestamp = useMemo(() => {
@@ -258,30 +271,36 @@ export default function LogChart({ logs, allLogs, patternIds, onBarClick, select
 
   const hasHighlights = patternIds && patternIds.length > 0 && chartData.some(d => (d.highlighted || 0) > 0);
 
-  // Custom tick component to show day in bold
+  // Custom tick component with multi-line support and better readability
   const CustomXAxisTick = ({ x, y, payload }: { x?: number; y?: number; payload?: { value: string } }) => {
     const label = payload?.value ?? '';
-    const hasDate = label.includes(' ') && (label.includes('Jan') || label.includes('Feb') || label.includes('Mar') || label.includes('Apr') || label.includes('May') || label.includes('Jun') || label.includes('Jul') || label.includes('Aug') || label.includes('Sep') || label.includes('Oct') || label.includes('Nov') || label.includes('Dec'));
+    const lines = label.split('\n');
 
-    if (hasDate) {
-      const parts = label.split(' ');
-      const datePart = parts.slice(0, 2).join(' ');
-      const timePart = parts.slice(2).join(' ');
+    if (lines.length === 2) {
+      // Multi-line: date on top (bold, brighter), time below
       return (
         <g transform={`translate(${x},${y})`}>
-          <text x={0} y={0} dy={12} textAnchor="middle" fill="#9ca3af" fontSize={10} fontWeight="bold">
-            {datePart}
+          <text x={0} y={0} dy={12} textAnchor="middle" fill="#d1d5db" fontSize={10} fontWeight="600">
+            {lines[0]}
           </text>
-          <text x={0} y={0} dy={24} textAnchor="middle" fill="#6b7280" fontSize={9}>
-            {timePart}
+          <text x={0} y={0} dy={25} textAnchor="middle" fill="#9ca3af" fontSize={10}>
+            {lines[1]}
           </text>
         </g>
       );
     }
 
+    // Single line: date-only (1d granularity) or time-only (same day)
+    const isDateOnly = /[A-Z][a-z]{2}\s/.test(label);
     return (
       <g transform={`translate(${x},${y})`}>
-        <text x={0} y={0} dy={16} textAnchor="middle" fill="#6b7280" fontSize={10}>
+        <text
+          x={0} y={0} dy={16}
+          textAnchor="middle"
+          fill={isDateOnly ? '#d1d5db' : '#9ca3af'}
+          fontSize={11}
+          fontWeight={isDateOnly ? '600' : '400'}
+        >
           {label}
         </text>
       </g>
@@ -355,8 +374,8 @@ export default function LogChart({ logs, allLogs, patternIds, onBarClick, select
             tick={<CustomXAxisTick />}
             axisLine={{ stroke: '#374151' }}
             tickLine={{ stroke: '#374151' }}
-            interval="preserveStartEnd"
-            height={45}
+            interval={tickInterval}
+            height={40}
           />
           <YAxis
             yAxisId="left"

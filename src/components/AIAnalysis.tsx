@@ -250,6 +250,92 @@ export default function AIAnalysis({ patterns, logs, stats }: AIAnalysisProps) {
     }
   };
 
+  // Lightweight syntax highlighter for code/config blocks
+  const highlightCode = (code: string) => {
+    // Tokenize with a single regex that matches patterns in priority order
+    const tokenRegex =
+      /(<!--[\s\S]*?-->|\/\/.*$|\/\*[\s\S]*?\*\/|#.*$)|(<\/?\w[\w.-]*(?:\s[^>]*)?>)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(\b\d+\.?\d*\b)|(\b(?:true|false|null|undefined|none|yes|no|on|off)\b)/gm;
+
+    const tokens: { text: string; className: string }[] = [];
+    let lastIndex = 0;
+
+    let match;
+    while ((match = tokenRegex.exec(code)) !== null) {
+      // Push plain text before this match
+      if (match.index > lastIndex) {
+        tokens.push({ text: code.slice(lastIndex, match.index), className: 'text-gray-300' });
+      }
+
+      if (match[1]) {
+        // Comments
+        tokens.push({ text: match[0], className: 'text-gray-500 italic' });
+      } else if (match[2]) {
+        // XML/HTML tags - colorize tag name and attributes separately
+        const tag = match[0];
+        const inner = tag.replace(
+          /(<\/?)(\w[\w.-]*)([\s\S]*?)(\/?>)/g,
+          (_, open: string, name: string, attrs: string, close: string) => {
+            // We'll handle this via nested spans in the JSX
+            return `\x01${open}\x02${name}\x03${attrs}\x04${close}\x05`;
+          }
+        );
+        if (inner.includes('\x01')) {
+          const parts = inner.split(/[\x01-\x05]/).filter(Boolean);
+          // parts: [open bracket, tag name, attributes, close bracket]
+          tokens.push({ text: parts[0], className: 'text-gray-500' });       // < or </
+          tokens.push({ text: parts[1], className: 'text-red-400' });         // tag name
+          if (parts[2]?.trim()) {
+            // Highlight attribute names and values
+            const attrStr = parts[2];
+            const attrRegex = /([\w-]+)(=)("[^"]*"|'[^']*'|\S+)/g;
+            let attrLast = 0;
+            let attrMatch;
+            while ((attrMatch = attrRegex.exec(attrStr)) !== null) {
+              if (attrMatch.index > attrLast) {
+                tokens.push({ text: attrStr.slice(attrLast, attrMatch.index), className: 'text-gray-300' });
+              }
+              tokens.push({ text: attrMatch[1], className: 'text-yellow-300' });  // attr name
+              tokens.push({ text: attrMatch[2], className: 'text-gray-500' });    // =
+              tokens.push({ text: attrMatch[3], className: 'text-green-400' });   // attr value
+              attrLast = attrMatch.index + attrMatch[0].length;
+            }
+            if (attrLast < attrStr.length) {
+              tokens.push({ text: attrStr.slice(attrLast), className: 'text-gray-300' });
+            }
+          }
+          tokens.push({ text: parts[3], className: 'text-gray-500' });       // > or />
+        } else {
+          tokens.push({ text: tag, className: 'text-red-400' });
+        }
+      } else if (match[3]) {
+        // Strings - check if it looks like a JSON key (followed by :)
+        const afterMatch = code.slice(match.index + match[0].length).trimStart();
+        if (afterMatch.startsWith(':')) {
+          tokens.push({ text: match[0], className: 'text-cyan-400' });       // JSON key
+        } else {
+          tokens.push({ text: match[0], className: 'text-amber-300' });      // string value
+        }
+      } else if (match[4]) {
+        // Numbers
+        tokens.push({ text: match[0], className: 'text-purple-400' });
+      } else if (match[5]) {
+        // Keywords (true, false, null, etc.)
+        tokens.push({ text: match[0], className: 'text-orange-400' });
+      }
+
+      lastIndex = match.index + match[0].length;
+    }
+
+    // Push remaining text
+    if (lastIndex < code.length) {
+      tokens.push({ text: code.slice(lastIndex), className: 'text-gray-300' });
+    }
+
+    return tokens.map((t, i) => (
+      <span key={i} className={t.className}>{t.text}</span>
+    ));
+  };
+
   const getScoreColor = (score: number) => {
     if (score >= 90) return 'text-green-400';
     if (score >= 70) return 'text-blue-400';
@@ -405,8 +491,8 @@ export default function AIAnalysis({ patterns, logs, stats }: AIAnalysisProps) {
                               Copy
                             </button>
                           </div>
-                          <pre className="bg-gray-950 rounded p-3 text-xs text-blue-300 font-mono overflow-x-auto whitespace-pre-wrap">
-                            {section.code}
+                          <pre className="bg-gray-950 rounded p-3 text-xs font-mono overflow-x-auto whitespace-pre-wrap">
+                            {highlightCode(section.code)}
                           </pre>
                         </div>
                       )}
