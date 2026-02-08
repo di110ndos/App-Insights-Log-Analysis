@@ -9,7 +9,7 @@ interface DetailDrawerProps {
 export default function DetailDrawer({ log, onClose }: DetailDrawerProps) {
   if (!log) return null;
 
-  const formatValue = (value: any): string => {
+  const formatValue = (value: unknown): string => {
     if (value === null || value === undefined) return '—';
     if (typeof value === 'object') {
       try {
@@ -40,7 +40,7 @@ export default function DetailDrawer({ log, onClose }: DetailDrawerProps) {
   };
 
   // Organize entries into groups
-  const rawEntries = Object.entries(log._raw || {}).filter(([_, v]) => v !== null && v !== undefined && v !== '');
+  const rawEntries = Object.entries(log._raw || {}).filter(([, v]) => v !== null && v !== undefined && v !== '');
 
   return (
     <>

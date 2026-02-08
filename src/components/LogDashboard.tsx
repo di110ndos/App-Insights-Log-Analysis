@@ -42,8 +42,8 @@ export default function LogDashboard() {
   // Current file (first file for single mode)
   const currentFile = files[0] || null;
   const compareFile = files[1] || null;
-  const logs = currentFile?.logs || [];
-  const columns = currentFile?.columns || [];
+  const logs = useMemo(() => currentFile?.logs || [], [currentFile]);
+  const columns = useMemo(() => currentFile?.columns || [], [currentFile]);
 
   const handleFileUpload = useCallback(async (file: File, slot: 0 | 1 = 0) => {
     setLoading(true);
