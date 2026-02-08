@@ -32,16 +32,31 @@ const GRANULARITY_OPTIONS: { value: TimeGranularity; label: string; ms: number }
   { value: '1d', label: '1 day', ms: 24 * 60 * 60 * 1000 },
 ];
 
+type TimezoneOption = 'local' | 'PT' | 'CT' | 'ET' | 'UTC';
+
+const TIMEZONE_OPTIONS: { value: TimezoneOption; label: string; iana: string | undefined }[] = [
+  { value: 'local', label: 'Local', iana: undefined },
+  { value: 'PT', label: 'PT', iana: 'America/Los_Angeles' },
+  { value: 'CT', label: 'CT', iana: 'America/Chicago' },
+  { value: 'ET', label: 'ET', iana: 'America/New_York' },
+  { value: 'UTC', label: 'UTC', iana: 'UTC' },
+];
+
 export default function LogChart({ logs, allLogs, patternIds, onBarClick, selectedTimeWindow }: LogChartProps) {
   const timelineLogs = allLogs || logs;
   const [selecting, setSelecting] = useState(false);
   const [selectionStart, setSelectionStart] = useState<string | null>(null);
   const [selectionEnd, setSelectionEnd] = useState<string | null>(null);
   const [granularity, setGranularity] = useState<TimeGranularity>('5m');
+  const [timezone, setTimezone] = useState<TimezoneOption>('local');
 
   const bucketSize = useMemo(() => {
     return GRANULARITY_OPTIONS.find(g => g.value === granularity)?.ms || 5 * 60 * 1000;
   }, [granularity]);
+
+  const tzIana = useMemo(() => {
+    return TIMEZONE_OPTIONS.find(t => t.value === timezone)?.iana;
+  }, [timezone]);
 
   // Create highlighted IDs set for pattern highlighting
   const highlightedIds = useMemo(() => new Set(patternIds || []), [patternIds]);
@@ -98,11 +113,13 @@ export default function LogChart({ logs, allLogs, patternIds, onBarClick, select
     let lastDay = '';
     return sorted.map(bucket => {
       const date = new Date(bucket.timestamp);
-      const day = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const tzOpts = tzIana ? { timeZone: tzIana } : {};
+      const day = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...tzOpts });
       const time = date.toLocaleTimeString('en-US', {
         hour: 'numeric',
         minute: '2-digit',
-        hour12: true
+        hour12: true,
+        ...tzOpts
       });
 
       // Show day only when it changes
@@ -119,7 +136,7 @@ export default function LogChart({ logs, allLogs, patternIds, onBarClick, select
         time: label
       };
     });
-  }, [logs, timelineLogs, bucketSize, highlightedIds]);
+  }, [logs, timelineLogs, bucketSize, highlightedIds, tzIana]);
 
   // Map time labels to timestamps for selection
   const timeToTimestamp = useMemo(() => {
@@ -277,6 +294,24 @@ export default function LogChart({ logs, allLogs, patternIds, onBarClick, select
                   onClick={() => setGranularity(opt.value)}
                   className={`px-2 py-0.5 text-xs rounded transition-colors ${
                     granularity === opt.value
+                      ? 'bg-blue-600 text-white'
+                      : 'text-gray-400 hover:text-gray-200'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="text-xs text-gray-500">Timezone:</span>
+            <div className="flex gap-0.5 bg-gray-800 rounded p-0.5">
+              {TIMEZONE_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => setTimezone(opt.value)}
+                  className={`px-2 py-0.5 text-xs rounded transition-colors ${
+                    timezone === opt.value
                       ? 'bg-blue-600 text-white'
                       : 'text-gray-400 hover:text-gray-200'
                   }`}
