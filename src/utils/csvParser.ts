@@ -74,7 +74,7 @@ export function parseCSV(file: File, fileIndex?: number): Promise<ParsedData> {
         const columns = parseResult.meta.fields || [];
         const mapping = detectColumnMapping(columns);
 
-        const logs: LogEntry[] = parseResult.data.map((row: any, index: number) => {
+        const logs: LogEntry[] = (parseResult.data as Record<string, string>[]).map((row, index) => {
           const timestamp = mapping.timestamp ? parseTimestamp(row[mapping.timestamp]) : null;
           const severity = mapping.severity ? parseSeverity(row[mapping.severity]) : 1;
           const message = mapping.message ? String(row[mapping.message] || '') :

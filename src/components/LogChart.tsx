@@ -163,7 +163,7 @@ export default function LogChart({ logs, allLogs, patternIds, onBarClick, select
     return startLabel && endLabel ? { start: startLabel, end: endLabel } : null;
   }, [selectedTimeWindow, chartData]);
 
-  const handleMouseDown = useCallback((e: any) => {
+  const handleMouseDown = useCallback((e: { activeLabel?: string }) => {
     if (e && e.activeLabel) {
       setSelecting(true);
       setSelectionStart(e.activeLabel);
@@ -171,7 +171,7 @@ export default function LogChart({ logs, allLogs, patternIds, onBarClick, select
     }
   }, []);
 
-  const handleMouseMove = useCallback((e: any) => {
+  const handleMouseMove = useCallback((e: { activeLabel?: string }) => {
     if (selecting && e && e.activeLabel) {
       setSelectionEnd(e.activeLabel);
     }
@@ -198,7 +198,7 @@ export default function LogChart({ logs, allLogs, patternIds, onBarClick, select
     setSelectionEnd(null);
   }, [selecting, selectionStart, selectionEnd, timeToTimestamp, bucketSize, onBarClick]);
 
-  const CustomTooltip = ({ active, payload, label }: any) => {
+  const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: { payload: ChartDataPoint }[]; label?: string }) => {
     if (!active || !payload || payload.length === 0) return null;
 
     const point = payload[0].payload as ChartDataPoint;
@@ -251,8 +251,8 @@ export default function LogChart({ logs, allLogs, patternIds, onBarClick, select
   const hasHighlights = patternIds && patternIds.length > 0 && chartData.some(d => (d.highlighted || 0) > 0);
 
   // Custom tick component to show day in bold
-  const CustomXAxisTick = ({ x, y, payload }: any) => {
-    const label = payload.value as string;
+  const CustomXAxisTick = ({ x, y, payload }: { x?: number; y?: number; payload?: { value: string } }) => {
+    const label = payload?.value ?? '';
     const hasDate = label.includes(' ') && (label.includes('Jan') || label.includes('Feb') || label.includes('Mar') || label.includes('Apr') || label.includes('May') || label.includes('Jun') || label.includes('Jul') || label.includes('Aug') || label.includes('Sep') || label.includes('Oct') || label.includes('Nov') || label.includes('Dec'));
 
     if (hasDate) {

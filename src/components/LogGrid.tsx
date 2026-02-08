@@ -104,7 +104,8 @@ export default function LogGrid({ logs, columns, onRowClick }: LogGridProps) {
     suppressMovable: false,
   }), []);
 
-  const onGridReady = useCallback((_params: GridReadyEvent) => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const onGridReady = useCallback((_: GridReadyEvent) => {
     // Don't auto-fit, let columns use their defined widths
   }, []);
 
@@ -114,7 +115,7 @@ export default function LogGrid({ logs, columns, onRowClick }: LogGridProps) {
     }
   }, [onRowClick]);
 
-  const getRowStyle = useCallback((params: any) => {
+  const getRowStyle = useCallback((params: { data?: LogEntry }) => {
     const severity = params.data?._severity;
     if (severity === 3) return { backgroundColor: 'rgba(127, 29, 29, 0.15)' };
     if (severity === 2) return { backgroundColor: 'rgba(113, 63, 18, 0.15)' };

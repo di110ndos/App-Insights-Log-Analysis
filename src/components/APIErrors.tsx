@@ -27,15 +27,15 @@ function extractAPIEndpoint(message: string): { endpoint: string; method: string
 
   const patterns = [
     // Method + endpoint: "GET /api/users" or "POST https://example.com/api/users"
-    /\b(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(?:https?:\/\/[^\/\s]+)?(\/api\/[^\s\?\#\"\'\]\}]+)/i,
+    /\b(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(?:https?:\/\/[^/\s]+)?(\/api\/[^\s?#"'\]}]+)/i,
     // Just endpoint with /api/
-    /(?:https?:\/\/[^\/\s]+)?(\/api\/[^\s\?\#\"\'\]\}\,]+)/i,
+    /(?:https?:\/\/[^/\s]+)?(\/api\/[^\s?#"'\]},]+)/i,
     // URL in quotes or after common patterns
-    /["'](?:https?:\/\/[^\/\s]+)?(\/api\/[^"'\s\?\#]+)["']/i,
+    /["'](?:https?:\/\/[^/\s]+)?(\/api\/[^"'\s?#]+)["']/i,
     // "endpoint": "/api/..."
-    /endpoint["']?\s*[:=]\s*["']?(\/api\/[^\s"'\,\}]+)/i,
+    /endpoint["']?\s*[:=]\s*["']?(\/api\/[^\s"',}]+)/i,
     // url: "/api/..." or path: "/api/..."
-    /(?:url|path|uri)["']?\s*[:=]\s*["']?(?:https?:\/\/[^\/\s]+)?(\/api\/[^\s"'\,\}]+)/i,
+    /(?:url|path|uri)["']?\s*[:=]\s*["']?(?:https?:\/\/[^/\s]+)?(\/api\/[^\s"',}]+)/i,
   ];
 
   for (const pattern of patterns) {
