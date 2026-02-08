@@ -5,11 +5,14 @@ export interface LogEntry {
   _message: string;
   _raw: Record<string, string>;
   _fileIndex?: number; // For comparison mode
+  _serverRole?: string; // Pre-computed server role from customDimensions
+  _operationId?: string; // Operation ID for correlation
 }
 
 export interface ChartDataPoint {
   time: string;
   timestamp: number;
+  critical: number;
   errors: number;
   warnings: number;
   info: number;
@@ -27,6 +30,7 @@ export interface ColumnMapping {
   timestamp: string;
   severity: string;
   message: string;
+  operationId: string;
 }
 
 export interface ParsedData {

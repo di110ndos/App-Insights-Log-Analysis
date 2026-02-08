@@ -77,6 +77,7 @@ export default function LogChart({ logs, allLogs, patternIds, onBarClick, select
         buckets.set(bucketTime, {
           time: '',
           timestamp: bucketTime,
+          critical: 0,
           errors: 0,
           warnings: 0,
           info: 0,
@@ -96,7 +97,8 @@ export default function LogChart({ logs, allLogs, patternIds, onBarClick, select
       const bucket = buckets.get(bucketTime);
       if (bucket) {
         bucket.total++;
-        if (log._severity === 3) bucket.errors++;
+        if (log._severity === 4) bucket.critical++;
+        else if (log._severity === 3) bucket.errors++;
         else if (log._severity === 2) bucket.warnings++;
         else if (log._severity === 1) bucket.info++;
         else bucket.verbose++;
@@ -210,6 +212,12 @@ export default function LogChart({ logs, allLogs, patternIds, onBarClick, select
             <div className="flex justify-between gap-4 border-b border-gray-700 pb-1 mb-1">
               <span className="text-purple-400 font-medium">Selected Pattern</span>
               <span className="text-purple-400 font-mono font-bold">{point.highlighted}</span>
+            </div>
+          )}
+          {point.critical > 0 && (
+            <div className="flex justify-between gap-4">
+              <span className="text-orange-400">Critical</span>
+              <span className="text-orange-400 font-mono">{point.critical}</span>
             </div>
           )}
           {point.errors > 0 && (
@@ -401,6 +409,7 @@ export default function LogChart({ logs, allLogs, patternIds, onBarClick, select
             />
           )}
 
+          <Bar yAxisId="left" dataKey="critical" stackId="a" fill="#f97316" name="Critical" />
           <Bar yAxisId="left" dataKey="errors" stackId="a" fill="#ef4444" name="Errors" />
           <Bar yAxisId="left" dataKey="warnings" stackId="a" fill="#eab308" name="Warnings" />
           <Bar yAxisId="left" dataKey="info" stackId="a" fill="#3b82f6" name="Info" />

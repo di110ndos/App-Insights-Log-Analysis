@@ -19,6 +19,13 @@ const MESSAGE_PATTERNS = [
   'Message', 'Msg', 'Description', 'Text', 'Details', 'RenderedMessage'
 ];
 
+const OPERATION_PATTERNS = [
+  'operationid', 'operation_id', 'operationId', 'OperationId',
+  'requestid', 'request_id', 'requestId', 'RequestId',
+  'correlationid', 'correlation_id', 'correlationId', 'CorrelationId',
+  'traceid', 'trace_id', 'traceId', 'TraceId'
+];
+
 function findColumn(columns: string[], patterns: string[]): string {
   for (const pattern of patterns) {
     const found = columns.find(c => c.toLowerCase() === pattern.toLowerCase());
@@ -35,7 +42,8 @@ export function detectColumnMapping(columns: string[]): ColumnMapping {
   return {
     timestamp: findColumn(columns, TIMESTAMP_PATTERNS),
     severity: findColumn(columns, SEVERITY_PATTERNS),
-    message: findColumn(columns, MESSAGE_PATTERNS)
+    message: findColumn(columns, MESSAGE_PATTERNS),
+    operationId: findColumn(columns, OPERATION_PATTERNS)
   };
 }
 
@@ -61,6 +69,29 @@ export function parseTimestamp(value: string | undefined): Date | null {
   return null;
 }
 
+function extractServerRole(row: Record<string, string>, columns: string[]): string | undefined {
+  // Find customDimensions column (case-insensitive)
+  const customDimCol = columns.find(c =>
+    c.toLowerCase() === 'customdimensions' || c.toLowerCase() === 'custom_dimensions'
+  );
+
+  if (!customDimCol || !row[customDimCol]) return undefined;
+
+  try {
+    const dims = JSON.parse(row[customDimCol]);
+    const instanceName = dims.InstanceName || dims.instanceName || '';
+
+    if (instanceName.includes('-CM')) return 'CM';
+    if (instanceName.includes('-CD')) return 'CD';
+    if (instanceName.includes('-XP')) return 'XP';
+    if (instanceName) return 'Other';
+
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function parseCSV(file: File, fileIndex?: number): Promise<ParsedData> {
   return new Promise((resolve, reject) => {
     Papa.parse(file, {
@@ -80,13 +111,21 @@ export function parseCSV(file: File, fileIndex?: number): Promise<ParsedData> {
           const message = mapping.message ? String(row[mapping.message] || '') :
             Object.values(row).find(v => typeof v === 'string' && String(v).length > 50) as string || '';
 
+          // Pre-compute server role from customDimensions
+          const serverRole = extractServerRole(row, columns);
+
+          // Extract operation ID for correlation
+          const operationId = mapping.operationId ? row[mapping.operationId] : undefined;
+
           return {
             _id: index,
             _timestamp: timestamp,
             _severity: severity,
             _message: message,
             _raw: row,
-            _fileIndex: fileIndex
+            _fileIndex: fileIndex,
+            _serverRole: serverRole,
+            _operationId: operationId || undefined
           };
         });
 
@@ -293,11 +332,11 @@ export function compareFiles(logs1: LogEntry[], logs2: LogEntry[]): ComparisonRe
 }
 
 export function getSeverityLabel(severity: number): string {
-  const labels = ['Verbose', 'Info', 'Warning', 'Error'];
+  const labels = ['Verbose', 'Info', 'Warning', 'Error', 'Critical'];
   return labels[severity] || 'Unknown';
 }
 
 export function getSeverityColor(severity: number): string {
-  const colors = ['#6b7280', '#3b82f6', '#eab308', '#ef4444'];
+  const colors = ['#6b7280', '#3b82f6', '#eab308', '#ef4444', '#f97316'];
   return colors[severity] || '#6b7280';
 }

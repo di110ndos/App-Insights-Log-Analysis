@@ -1,13 +1,15 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect, lazy, Suspense } from 'react';
 import { LogEntry, TimeWindow, FilterState, ErrorPattern, LogFile, ComparisonResult } from '../types';
-import { parseCSV, extractErrorPatterns, getSeverityLabel, compareFiles, calculateFileStats } from '../utils/csvParser';
+import { extractErrorPatterns, compareFiles, calculateFileStats } from '../utils/csvParser';
 import LogChart from './LogChart';
 import LogGrid from './LogGrid';
 import DetailDrawer from './DetailDrawer';
 import ErrorPatterns from './ErrorPatterns';
-import FileComparison from './FileComparison';
-import AIAnalysis from './AIAnalysis';
 import APIErrors from './APIErrors';
+import FilterBar from './FilterBar';
+
+const FileComparison = lazy(() => import('./FileComparison'));
+const AIAnalysis = lazy(() => import('./AIAnalysis'));
 
 type ViewMode = 'single' | 'compare';
 type TabMode = 'grid' | 'patterns' | 'api-errors' | 'comparison' | 'ai';
@@ -24,20 +26,30 @@ export default function LogDashboard() {
   const [fileSizes, setFileSizes] = useState<number[]>([]);
   const [selectedLog, setSelectedLog] = useState<LogEntry | null>(null);
   const [loading, setLoading] = useState(false);
+  const [parseProgress, setParseProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('single');
   const [activeTab, setActiveTab] = useState<TabMode>('grid');
   const [selectedPattern, setSelectedPattern] = useState<ErrorPattern | null>(null);
 
+  const [searchInput, setSearchInput] = useState('');
   const [filters, setFilters] = useState<FilterState>({
     timeWindow: null,
-    severities: [0, 1, 2, 3],
+    severities: [0, 1, 2, 3, 4],
     searchText: '',
     searchColumn: '_all',
     patternIds: null,
     serverRoles: ['CM', 'CD', 'XP', 'Other']
   });
+
+  // Debounce search input
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setFilters(f => ({ ...f, searchText: searchInput }));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
 
   // Current file (first file for single mode)
   const currentFile = files[0] || null;
@@ -47,6 +59,7 @@ export default function LogDashboard() {
 
   const handleFileUpload = useCallback(async (file: File, slot: 0 | 1 = 0) => {
     setLoading(true);
+    setParseProgress(0);
     setError(null);
     setWarning(null);
 
@@ -63,7 +76,33 @@ export default function LogDashboard() {
     });
 
     try {
-      const result = await parseCSV(file, slot);
+      // Use Web Worker for parsing
+      const worker = new Worker(new URL('../workers/csvWorker.ts', import.meta.url), { type: 'module' });
+
+      const result = await new Promise<{ logs: LogEntry[], columns: string[], detectedMapping: any }>((resolve, reject) => {
+        worker.onmessage = (e) => {
+          const { type, percent, data, message } = e.data;
+
+          if (type === 'progress') {
+            setParseProgress(percent);
+          } else if (type === 'complete') {
+            worker.terminate();
+            resolve(data);
+          } else if (type === 'error') {
+            worker.terminate();
+            reject(new Error(message));
+          }
+        };
+
+        worker.onerror = (error) => {
+          worker.terminate();
+          reject(error);
+        };
+
+        // Post the file to the worker
+        worker.postMessage({ type: 'parse', file, fileIndex: slot });
+      });
+
       const stats = calculateFileStats(result.logs);
 
       const newFile: LogFile = {
@@ -87,7 +126,8 @@ export default function LogDashboard() {
 
       // Reset filters when loading new file
       if (slot === 0) {
-        setFilters({ timeWindow: null, severities: [0, 1, 2, 3], searchText: '', searchColumn: '_all', patternIds: null, serverRoles: ['CM', 'CD', 'XP', 'Other'] });
+        setFilters({ timeWindow: null, severities: [0, 1, 2, 3, 4], searchText: '', searchColumn: '_all', patternIds: null, serverRoles: ['CM', 'CD', 'XP', 'Other'] });
+        setSearchInput('');
         setSelectedPattern(null);
         setSelectedLog(null);
       }
@@ -95,6 +135,7 @@ export default function LogDashboard() {
       setError(err instanceof Error ? err.message : 'Failed to parse CSV');
     } finally {
       setLoading(false);
+      setParseProgress(0);
     }
   }, []);
 
@@ -116,31 +157,10 @@ export default function LogDashboard() {
     event.preventDefault();
   }, []);
 
-  // Helper to extract server role from customDimensions
-  const getInstanceRole = useCallback((log: LogEntry): string | null => {
-    const customDimCol = columns.find(c =>
-      c.toLowerCase().includes('customdimensions') || c.toLowerCase().includes('custom_dimensions')
-    );
-    if (!customDimCol || !log._raw[customDimCol]) return null;
-
-    try {
-      const dims = JSON.parse(log._raw[customDimCol]);
-      const instanceName = dims.InstanceName || dims.instanceName || '';
-      if (instanceName.includes('-CM')) return 'CM';
-      if (instanceName.includes('-CD')) return 'CD';
-      if (instanceName.includes('-XP')) return 'XP';
-      return 'Other';
-    } catch {
-      return null;
-    }
-  }, [columns]);
-
-  // Check if custom dimensions column exists
+  // Check if any logs have pre-computed server roles
   const hasCustomDimensions = useMemo(() => {
-    return columns.some(c =>
-      c.toLowerCase().includes('customdimensions') || c.toLowerCase().includes('custom_dimensions')
-    );
-  }, [columns]);
+    return logs.some(l => l._serverRole !== undefined);
+  }, [logs]);
 
   // Filter logs
   const filteredLogs = useMemo(() => {
@@ -156,7 +176,7 @@ export default function LogDashboard() {
 
       // Server role filter (only apply if custom dimensions exist)
       if (hasCustomDimensions && filters.serverRoles.length < 4) {
-        const role = getInstanceRole(log);
+        const role = log._serverRole;
         if (role && !filters.serverRoles.includes(role)) return false;
       }
 
@@ -173,7 +193,7 @@ export default function LogDashboard() {
 
       return true;
     });
-  }, [logs, filters, hasCustomDimensions, getInstanceRole]);
+  }, [logs, filters, hasCustomDimensions]);
 
   // Filtered logs for chart (all filters except time window to preserve timeline context)
   const chartFilteredLogs = useMemo(() => {
@@ -183,7 +203,7 @@ export default function LogDashboard() {
 
       // Server role filter
       if (hasCustomDimensions && filters.serverRoles.length < 4) {
-        const role = getInstanceRole(log);
+        const role = log._serverRole;
         if (role && !filters.serverRoles.includes(role)) return false;
       }
 
@@ -201,7 +221,7 @@ export default function LogDashboard() {
 
       return true;
     });
-  }, [logs, filters.severities, filters.patternIds, filters.serverRoles, filters.searchText, filters.searchColumn, hasCustomDimensions, getInstanceRole]);
+  }, [logs, filters.severities, filters.patternIds, filters.serverRoles, filters.searchText, filters.searchColumn, hasCustomDimensions]);
 
   const errorPatterns = useMemo(() => extractErrorPatterns(logs), [logs]);
 
@@ -212,6 +232,7 @@ export default function LogDashboard() {
   }, [currentFile, compareFile]);
 
   const stats = useMemo(() => {
+    const critical = logs.filter(l => l._severity === 4).length;
     const errors = logs.filter(l => l._severity === 3).length;
     const warnings = logs.filter(l => l._severity === 2).length;
     const withTime = logs.filter(l => l._timestamp);
@@ -224,7 +245,7 @@ export default function LogDashboard() {
       timeRange = `${start.toLocaleDateString()} ${start.toLocaleTimeString()} - ${end.toLocaleTimeString()}`;
     }
 
-    return { total: logs.length, errors, warnings, timeRange, filtered: filteredLogs.length };
+    return { total: logs.length, critical, errors, warnings, timeRange, filtered: filteredLogs.length };
   }, [logs, filteredLogs]);
 
   const handleBarClick = useCallback((window: TimeWindow) => {
@@ -245,6 +266,16 @@ export default function LogDashboard() {
     setActiveTab('grid');
   }, []);
 
+  const handleOperationIdClick = useCallback((operationId: string) => {
+    const matchingIds = logs
+      .filter(l => l._operationId === operationId)
+      .map(l => l._id);
+    setFilters(f => ({ ...f, patternIds: matchingIds, timeWindow: null }));
+    setSelectedPattern(null);
+    setSelectedLog(null);
+    setActiveTab('grid');
+  }, [logs]);
+
   const handleSeverityToggle = useCallback((severity: number) => {
     setFilters(f => ({
       ...f,
@@ -264,7 +295,8 @@ export default function LogDashboard() {
   }, []);
 
   const clearFilters = useCallback(() => {
-    setFilters({ timeWindow: null, severities: [0, 1, 2, 3], searchText: '', searchColumn: '_all', patternIds: null, serverRoles: ['CM', 'CD', 'XP', 'Other'] });
+    setFilters({ timeWindow: null, severities: [0, 1, 2, 3, 4], searchText: '', searchColumn: '_all', patternIds: null, serverRoles: ['CM', 'CD', 'XP', 'Other'] });
+    setSearchInput('');
     setSelectedPattern(null);
   }, []);
 
@@ -272,6 +304,32 @@ export default function LogDashboard() {
     setFilters(f => ({ ...f, patternIds: null }));
     setSelectedPattern(null);
   }, []);
+
+  const handleExport = useCallback(() => {
+    if (filteredLogs.length === 0) return;
+
+    // Use the original CSV columns
+    const headers = columns.join(',');
+    const rows = filteredLogs.map(log => {
+      return columns.map(col => {
+        const value = String(log._raw[col] || '');
+        // Escape CSV values that contain commas, quotes, or newlines
+        if (value.includes(',') || value.includes('"') || value.includes('\n')) {
+          return `"${value.replace(/"/g, '""')}"`;
+        }
+        return value;
+      }).join(',');
+    });
+
+    const csv = [headers, ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `filtered-${currentFile?.name || 'logs'}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }, [filteredLogs, columns, currentFile]);
 
   const removeFile = useCallback((index: number) => {
     setFiles(prev => prev.filter((_, i) => i !== index));
@@ -339,7 +397,9 @@ export default function LogDashboard() {
         {loading && (
           <div className="flex items-center justify-center py-20">
             <div className="animate-spin rounded-full h-8 w-8 border-2 border-blue-500 border-t-transparent"></div>
-            <span className="ml-3 text-gray-400">Parsing CSV...</span>
+            <span className="ml-3 text-gray-400">
+              Parsing CSV...{parseProgress > 0 ? ` ${parseProgress}%` : ''}
+            </span>
           </div>
         )}
 
@@ -403,7 +463,7 @@ export default function LogDashboard() {
         {files.length > 0 && !loading && (
           <>
             {/* Stats Bar */}
-            <div className="grid grid-cols-6 gap-3 mb-4">
+            <div className="grid grid-cols-7 gap-3 mb-4">
               <div className="bg-gray-900 rounded-lg p-3 border border-gray-800">
                 <div className="text-xs text-gray-500 uppercase tracking-wider">Total</div>
                 <div className="text-xl font-bold text-gray-100">{stats.total.toLocaleString()}</div>
@@ -411,6 +471,10 @@ export default function LogDashboard() {
               <div className="bg-gray-900 rounded-lg p-3 border border-gray-800">
                 <div className="text-xs text-gray-500 uppercase tracking-wider">Filtered</div>
                 <div className="text-xl font-bold text-blue-400">{stats.filtered.toLocaleString()}</div>
+              </div>
+              <div className="bg-gray-900 rounded-lg p-3 border border-gray-800">
+                <div className="text-xs text-gray-500 uppercase tracking-wider">Critical</div>
+                <div className="text-xl font-bold text-orange-400">{stats.critical.toLocaleString()}</div>
               </div>
               <div className="bg-gray-900 rounded-lg p-3 border border-gray-800">
                 <div className="text-xs text-gray-500 uppercase tracking-wider">Errors</div>
@@ -449,94 +513,25 @@ export default function LogDashboard() {
 
             {/* Filters */}
             {activeTab !== 'comparison' && (
-              <div className="bg-gray-900 rounded-lg p-3 border border-gray-800 mb-4 flex flex-wrap items-center gap-3">
-                <div className="flex items-center gap-1">
-                  <span className="text-xs text-gray-500 mr-2">Severity:</span>
-                  {[3, 2, 1, 0].map(sev => (
-                    <button
-                      key={sev}
-                      onClick={() => handleSeverityToggle(sev)}
-                      className={`px-2 py-1 text-xs rounded font-medium transition-colors ${
-                        filters.severities.includes(sev)
-                          ? sev === 3 ? 'bg-red-900/50 text-red-400 border border-red-700'
-                          : sev === 2 ? 'bg-yellow-900/50 text-yellow-400 border border-yellow-700'
-                          : sev === 1 ? 'bg-blue-900/50 text-blue-400 border border-blue-700'
-                          : 'bg-gray-700/50 text-gray-400 border border-gray-600'
-                          : 'bg-gray-800 text-gray-600 border border-gray-700'
-                      }`}
-                    >
-                      {getSeverityLabel(sev)}
-                    </button>
-                  ))}
-                </div>
-
-                {hasCustomDimensions && (
-                  <div className="flex items-center gap-1">
-                    <span className="text-xs text-gray-500 mr-2">Server Role:</span>
-                    {[
-                      { role: 'CM', label: 'CM', activeClass: 'bg-blue-900/50 text-blue-400 border border-blue-700' },
-                      { role: 'CD', label: 'CD', activeClass: 'bg-green-900/50 text-green-400 border border-green-700' },
-                      { role: 'XP', label: 'XP', activeClass: 'bg-purple-900/50 text-purple-400 border border-purple-700' },
-                      { role: 'Other', label: 'Other', activeClass: 'bg-gray-700/50 text-gray-400 border border-gray-600' }
-                    ].map(({ role, label, activeClass }) => (
-                      <button
-                        key={role}
-                        onClick={() => handleServerRoleToggle(role)}
-                        className={`px-2 py-1 text-xs rounded font-medium transition-colors ${
-                          filters.serverRoles.includes(role)
-                            ? activeClass
-                            : 'bg-gray-800 text-gray-600 border border-gray-700'
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                <div className="flex items-center gap-2 flex-1 min-w-[300px]">
-                  <select
-                    value={filters.searchColumn}
-                    onChange={(e) => setFilters(f => ({ ...f, searchColumn: e.target.value }))}
-                    className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-300"
-                  >
-                    <option value="_all">All Columns</option>
-                    {columns.map(col => (
-                      <option key={col} value={col}>{col}</option>
-                    ))}
-                  </select>
-                  <input
-                    type="text"
-                    placeholder="Search logs..."
-                    value={filters.searchText}
-                    onChange={(e) => setFilters(f => ({ ...f, searchText: e.target.value }))}
-                    className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-
-                {filters.timeWindow && (
-                  <div className="flex items-center gap-2 text-xs text-blue-400 bg-blue-900/20 px-2 py-1 rounded border border-blue-800">
-                    <span>Time filtered</span>
-                    <button onClick={() => setFilters(f => ({ ...f, timeWindow: null }))} className="hover:text-blue-300">✕</button>
-                  </div>
-                )}
-
-                {selectedPattern && (
-                  <div className="flex items-center gap-2 text-xs text-purple-400 bg-purple-900/20 px-2 py-1 rounded border border-purple-800">
-                    <span>Pattern: {selectedPattern.count} entries</span>
-                    <button onClick={clearPatternFilter} className="hover:text-purple-300">✕</button>
-                  </div>
-                )}
-
-                <button onClick={clearFilters} className="text-xs text-gray-400 hover:text-gray-300 px-2 py-1">
-                  Clear all
-                </button>
-
-                <label className="text-xs text-blue-400 hover:text-blue-300 cursor-pointer px-2 py-1">
-                  Load new file
-                  <input type="file" accept=".csv" onChange={(e) => handleFileInput(e, 0)} className="hidden" />
-                </label>
-              </div>
+              <FilterBar
+                filters={filters}
+                searchInput={searchInput}
+                onSearchInputChange={setSearchInput}
+                severities={filters.severities}
+                onSeverityToggle={handleSeverityToggle}
+                hasCustomDimensions={hasCustomDimensions}
+                serverRoles={filters.serverRoles}
+                onServerRoleToggle={handleServerRoleToggle}
+                columns={columns}
+                onSearchColumnChange={(column) => setFilters(f => ({ ...f, searchColumn: column }))}
+                onTimeWindowClear={() => setFilters(f => ({ ...f, timeWindow: null }))}
+                selectedPattern={selectedPattern}
+                onClearPatternFilter={clearPatternFilter}
+                onClearFilters={clearFilters}
+                onFileInput={(e) => handleFileInput(e, 0)}
+                onExport={handleExport}
+                filteredCount={filteredLogs.length}
+              />
             )}
 
             {/* Tabs */}
@@ -612,11 +607,13 @@ export default function LogDashboard() {
               />
             )}
             {activeTab === 'comparison' && comparisonResult && (
-              <FileComparison
-                result={comparisonResult}
-                file1Name={currentFile?.name || 'File 1'}
-                file2Name={compareFile?.name || 'File 2'}
-              />
+              <Suspense fallback={<div className="bg-gray-900 rounded-lg border border-gray-800 p-8 text-center text-gray-500">Loading File Comparison...</div>}>
+                <FileComparison
+                  result={comparisonResult}
+                  file1Name={currentFile?.name || 'File 1'}
+                  file2Name={compareFile?.name || 'File 2'}
+                />
+              </Suspense>
             )}
             {activeTab === 'comparison' && !comparisonResult && (
               <div className="bg-gray-900 rounded-lg border border-gray-800 p-8 text-center text-gray-500">
@@ -624,14 +621,16 @@ export default function LogDashboard() {
               </div>
             )}
             {activeTab === 'ai' && (
-              <AIAnalysis
-                patterns={errorPatterns}
-                logs={logs}
-                stats={stats}
-              />
+              <Suspense fallback={<div className="bg-gray-900 rounded-lg border border-gray-800 p-8 text-center text-gray-500">Loading AI Analysis...</div>}>
+                <AIAnalysis
+                  patterns={errorPatterns}
+                  logs={logs}
+                  stats={stats}
+                />
+              </Suspense>
             )}
 
-            <DetailDrawer log={selectedLog} onClose={() => setSelectedLog(null)} />
+            <DetailDrawer log={selectedLog} onClose={() => setSelectedLog(null)} onOperationIdClick={handleOperationIdClick} />
           </>
         )}
       </main>

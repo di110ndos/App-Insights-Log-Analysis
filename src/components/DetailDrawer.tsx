@@ -4,9 +4,10 @@ import { getSeverityLabel, getSeverityColor } from '../utils/csvParser';
 interface DetailDrawerProps {
   log: LogEntry | null;
   onClose: () => void;
+  onOperationIdClick?: (operationId: string) => void;
 }
 
-export default function DetailDrawer({ log, onClose }: DetailDrawerProps) {
+export default function DetailDrawer({ log, onClose, onOperationIdClick }: DetailDrawerProps) {
   if (!log) return null;
 
   const formatValue = (value: unknown): string => {
@@ -94,6 +95,24 @@ export default function DetailDrawer({ log, onClose }: DetailDrawerProps) {
                   second: '2-digit',
                   hour12: false
                 })}
+              </div>
+            </div>
+          )}
+
+          {/* Operation ID */}
+          {log._operationId && (
+            <div className="mb-6">
+              <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Operation ID</div>
+              <div className="flex items-center gap-2">
+                <code className="font-mono text-gray-200 text-sm">{log._operationId}</code>
+                {onOperationIdClick && (
+                  <button
+                    onClick={() => onOperationIdClick(log._operationId!)}
+                    className="text-xs text-blue-400 hover:text-blue-300 px-2 py-0.5 bg-blue-900/20 border border-blue-800 rounded"
+                  >
+                    Show related logs
+                  </button>
+                )}
               </div>
             </div>
           )}

@@ -6,6 +6,7 @@ import {
   normalizeMessage,
   extractErrorPatterns,
   calculateFileStats,
+  compareFiles,
   getSeverityLabel,
   getSeverityColor,
 } from './csvParser';
@@ -34,6 +35,7 @@ describe('detectColumnMapping', () => {
     expect(mapping.timestamp).toBe('timestamp');
     expect(mapping.severity).toBe('severityLevel');
     expect(mapping.message).toBe('message');
+    expect(mapping.operationId).toBe('operationId');
   });
 
   it('should detect PascalCase Azure column names', () => {
@@ -112,6 +114,31 @@ describe('detectColumnMapping', () => {
     expect(mapping.timestamp).toBe('ingestiontime');
     expect(mapping.severity).toBe('severity');
     expect(mapping.message).toBe('innermostmessage');
+  });
+
+  it('should detect operation ID column variations', () => {
+    const tests = [
+      { columns: ['timestamp', 'operationId'], expected: 'operationId' },
+      { columns: ['timestamp', 'operation_id'], expected: 'operation_id' },
+      { columns: ['timestamp', 'OperationId'], expected: 'OperationId' },
+      { columns: ['timestamp', 'requestId'], expected: 'requestId' },
+      { columns: ['timestamp', 'request_id'], expected: 'request_id' },
+      { columns: ['timestamp', 'correlationId'], expected: 'correlationId' },
+      { columns: ['timestamp', 'correlation_id'], expected: 'correlation_id' },
+      { columns: ['timestamp', 'traceId'], expected: 'traceId' },
+      { columns: ['timestamp', 'trace_id'], expected: 'trace_id' },
+    ];
+
+    tests.forEach(({ columns, expected }) => {
+      const mapping = detectColumnMapping(columns);
+      expect(mapping.operationId).toBe(expected);
+    });
+  });
+
+  it('should return empty string for operationId when no matching column exists', () => {
+    const columns = ['timestamp', 'severity', 'message'];
+    const mapping = detectColumnMapping(columns);
+    expect(mapping.operationId).toBe('');
   });
 });
 
@@ -264,9 +291,9 @@ describe('parseTimestamp', () => {
   it('should parse a date-only string', () => {
     const result = parseTimestamp('2024-06-15');
     expect(result).toBeInstanceOf(Date);
-    expect(result!.getFullYear()).toBe(2024);
-    expect(result!.getMonth()).toBe(5); // June is 0-indexed
-    expect(result!.getDate()).toBe(15);
+    expect(result!.getUTCFullYear()).toBe(2024);
+    expect(result!.getUTCMonth()).toBe(5); // June is 0-indexed
+    expect(result!.getUTCDate()).toBe(15);
   });
 
   it('should parse an ISO date with milliseconds', () => {
@@ -653,6 +680,271 @@ describe('calculateFileStats', () => {
 });
 
 // =============================================================================
+// compareFiles
+// =============================================================================
+describe('compareFiles', () => {
+  it('should identify patterns only in file1 (resolved errors)', () => {
+    const logs1: LogEntry[] = [
+      makeLog({ _id: 1, _severity: 3, _message: 'Connection timeout 100' }),
+      makeLog({ _id: 2, _severity: 3, _message: 'Connection timeout 200' }),
+      makeLog({ _id: 3, _severity: 2, _message: 'Slow query detected' }),
+    ];
+    const logs2: LogEntry[] = [
+      makeLog({ _id: 10, _severity: 3, _message: 'Different error' }),
+    ];
+
+    const result = compareFiles(logs1, logs2);
+
+    expect(result.file1Only).toHaveLength(2);
+    const file1Messages = result.file1Only.map(p => p.normalized);
+    expect(file1Messages).toContain('Connection timeout <NUM>');
+    expect(file1Messages).toContain('Slow query detected');
+  });
+
+  it('should identify patterns only in file2 (new errors)', () => {
+    const logs1: LogEntry[] = [
+      makeLog({ _id: 1, _severity: 3, _message: 'Old error' }),
+    ];
+    const logs2: LogEntry[] = [
+      makeLog({ _id: 10, _severity: 3, _message: 'New error 100' }),
+      makeLog({ _id: 11, _severity: 3, _message: 'New error 200' }),
+      makeLog({ _id: 12, _severity: 2, _message: 'New warning' }),
+    ];
+
+    const result = compareFiles(logs1, logs2);
+
+    expect(result.file2Only).toHaveLength(2);
+    const file2Messages = result.file2Only.map(p => p.normalized);
+    expect(file2Messages).toContain('New error <NUM>');
+    expect(file2Messages).toContain('New warning');
+  });
+
+  it('should identify patterns in both files with change percentage', () => {
+    const logs1: LogEntry[] = [
+      makeLog({ _id: 1, _severity: 3, _message: 'Error 1' }),
+      makeLog({ _id: 2, _severity: 3, _message: 'Error 2' }),
+      makeLog({ _id: 3, _severity: 3, _message: 'Error 3' }),
+      makeLog({ _id: 4, _severity: 3, _message: 'Error 4' }),
+    ];
+    const logs2: LogEntry[] = [
+      makeLog({ _id: 10, _severity: 3, _message: 'Error 5' }),
+      makeLog({ _id: 11, _severity: 3, _message: 'Error 6' }),
+    ];
+
+    const result = compareFiles(logs1, logs2);
+
+    expect(result.bothFiles).toHaveLength(1);
+    expect(result.bothFiles[0].file1Count).toBe(4);
+    expect(result.bothFiles[0].file2Count).toBe(2);
+    // Change = ((2 - 4) / 4) * 100 = -50%
+    expect(result.bothFiles[0].change).toBe(-50);
+  });
+
+  it('should calculate correct summary stats (file1Errors, file2Errors, file1Warnings, file2Warnings)', () => {
+    const logs1: LogEntry[] = [
+      makeLog({ _id: 1, _severity: 3, _message: 'Error 1' }),
+      makeLog({ _id: 2, _severity: 3, _message: 'Error 2' }),
+      makeLog({ _id: 3, _severity: 2, _message: 'Warning 1' }),
+      makeLog({ _id: 4, _severity: 1, _message: 'Info 1' }), // Should be ignored
+    ];
+    const logs2: LogEntry[] = [
+      makeLog({ _id: 10, _severity: 3, _message: 'Error 3' }),
+      makeLog({ _id: 11, _severity: 2, _message: 'Warning 2' }),
+      makeLog({ _id: 12, _severity: 2, _message: 'Warning 3' }),
+      makeLog({ _id: 13, _severity: 2, _message: 'Warning 4' }),
+    ];
+
+    const result = compareFiles(logs1, logs2);
+
+    expect(result.summary.file1Errors).toBe(2);
+    expect(result.summary.file2Errors).toBe(1);
+    expect(result.summary.file1Warnings).toBe(1);
+    expect(result.summary.file2Warnings).toBe(3);
+  });
+
+  it('should count newPatterns and resolvedPatterns correctly', () => {
+    const logs1: LogEntry[] = [
+      makeLog({ _id: 1, _severity: 3, _message: 'Old pattern A' }),
+      makeLog({ _id: 2, _severity: 3, _message: 'Old pattern B' }),
+      makeLog({ _id: 3, _severity: 3, _message: 'Common pattern 1' }),
+    ];
+    const logs2: LogEntry[] = [
+      makeLog({ _id: 10, _severity: 3, _message: 'New pattern X' }),
+      makeLog({ _id: 11, _severity: 3, _message: 'New pattern Y' }),
+      makeLog({ _id: 12, _severity: 3, _message: 'New pattern Z' }),
+      makeLog({ _id: 13, _severity: 3, _message: 'Common pattern 2' }),
+    ];
+
+    const result = compareFiles(logs1, logs2);
+
+    expect(result.summary.newPatterns).toBe(3); // file2Only count
+    expect(result.summary.resolvedPatterns).toBe(2); // file1Only count
+  });
+
+  it('should count increasedPatterns (change > 10%) and decreasedPatterns (change < -10%)', () => {
+    const logs1: LogEntry[] = [
+      // Pattern A: 10 occurrences -> 15 in file2 = +50% (increased)
+      ...Array.from({ length: 10 }, (_, i) => makeLog({ _id: i, _severity: 3, _message: `Pattern A ${i}` })),
+      // Pattern B: 10 occurrences -> 5 in file2 = -50% (decreased)
+      ...Array.from({ length: 10 }, (_, i) => makeLog({ _id: i + 10, _severity: 3, _message: `Pattern B ${i}` })),
+      // Pattern C: 10 occurrences -> 11 in file2 = +10% (not increased, threshold is > 10%)
+      ...Array.from({ length: 10 }, (_, i) => makeLog({ _id: i + 20, _severity: 3, _message: `Pattern C ${i}` })),
+      // Pattern D: 10 occurrences -> 9 in file2 = -10% (not decreased, threshold is < -10%)
+      ...Array.from({ length: 10 }, (_, i) => makeLog({ _id: i + 30, _severity: 3, _message: `Pattern D ${i}` })),
+    ];
+    const logs2: LogEntry[] = [
+      // Pattern A: 15 occurrences
+      ...Array.from({ length: 15 }, (_, i) => makeLog({ _id: i + 100, _severity: 3, _message: `Pattern A ${i}` })),
+      // Pattern B: 5 occurrences
+      ...Array.from({ length: 5 }, (_, i) => makeLog({ _id: i + 200, _severity: 3, _message: `Pattern B ${i}` })),
+      // Pattern C: 11 occurrences
+      ...Array.from({ length: 11 }, (_, i) => makeLog({ _id: i + 300, _severity: 3, _message: `Pattern C ${i}` })),
+      // Pattern D: 9 occurrences
+      ...Array.from({ length: 9 }, (_, i) => makeLog({ _id: i + 400, _severity: 3, _message: `Pattern D ${i}` })),
+    ];
+
+    const result = compareFiles(logs1, logs2);
+
+    expect(result.summary.increasedPatterns).toBe(1); // Pattern A
+    expect(result.summary.decreasedPatterns).toBe(1); // Pattern B
+  });
+
+  it('should sort file1Only and file2Only by count descending', () => {
+    const logs1: LogEntry[] = [
+      makeLog({ _id: 1, _severity: 3, _message: 'Low frequency error' }),
+      makeLog({ _id: 2, _severity: 3, _message: 'High frequency error 1' }),
+      makeLog({ _id: 3, _severity: 3, _message: 'High frequency error 2' }),
+      makeLog({ _id: 4, _severity: 3, _message: 'High frequency error 3' }),
+      makeLog({ _id: 5, _severity: 3, _message: 'Medium frequency error 1' }),
+      makeLog({ _id: 6, _severity: 3, _message: 'Medium frequency error 2' }),
+    ];
+    const logs2: LogEntry[] = [
+      // Empty - all patterns will be in file1Only
+    ];
+
+    const result = compareFiles(logs1, logs2);
+
+    expect(result.file1Only).toHaveLength(3);
+    expect(result.file1Only[0].count).toBe(3); // High frequency
+    expect(result.file1Only[1].count).toBe(2); // Medium frequency
+    expect(result.file1Only[2].count).toBe(1); // Low frequency
+  });
+
+  it('should sort bothFiles by absolute change percentage descending', () => {
+    const logs1: LogEntry[] = [
+      // Pattern A: 10 occurrences -> 20 in file2 = +100%
+      ...Array.from({ length: 10 }, (_, i) => makeLog({ _id: i, _severity: 3, _message: `Pattern A ${i}` })),
+      // Pattern B: 10 occurrences -> 15 in file2 = +50%
+      ...Array.from({ length: 10 }, (_, i) => makeLog({ _id: i + 10, _severity: 3, _message: `Pattern B ${i}` })),
+      // Pattern C: 10 occurrences -> 7 in file2 = -30%
+      ...Array.from({ length: 10 }, (_, i) => makeLog({ _id: i + 20, _severity: 3, _message: `Pattern C ${i}` })),
+      // Pattern D: 10 occurrences -> 10 in file2 = 0%
+      ...Array.from({ length: 10 }, (_, i) => makeLog({ _id: i + 30, _severity: 3, _message: `Pattern D ${i}` })),
+    ];
+    const logs2: LogEntry[] = [
+      ...Array.from({ length: 20 }, (_, i) => makeLog({ _id: i + 100, _severity: 3, _message: `Pattern A ${i}` })),
+      ...Array.from({ length: 15 }, (_, i) => makeLog({ _id: i + 200, _severity: 3, _message: `Pattern B ${i}` })),
+      ...Array.from({ length: 7 }, (_, i) => makeLog({ _id: i + 300, _severity: 3, _message: `Pattern C ${i}` })),
+      ...Array.from({ length: 10 }, (_, i) => makeLog({ _id: i + 400, _severity: 3, _message: `Pattern D ${i}` })),
+    ];
+
+    const result = compareFiles(logs1, logs2);
+
+    expect(result.bothFiles).toHaveLength(4);
+    expect(Math.abs(result.bothFiles[0].change)).toBe(100); // Pattern A (+100%)
+    expect(Math.abs(result.bothFiles[1].change)).toBe(50); // Pattern B (+50%)
+    expect(Math.abs(result.bothFiles[2].change)).toBe(30); // Pattern C (-30%)
+    expect(Math.abs(result.bothFiles[3].change)).toBe(0); // Pattern D (0%)
+  });
+
+  it('should handle empty arrays for both files', () => {
+    const result = compareFiles([], []);
+
+    expect(result.file1Only).toEqual([]);
+    expect(result.file2Only).toEqual([]);
+    expect(result.bothFiles).toEqual([]);
+    expect(result.summary.file1Errors).toBe(0);
+    expect(result.summary.file2Errors).toBe(0);
+    expect(result.summary.file1Warnings).toBe(0);
+    expect(result.summary.file2Warnings).toBe(0);
+    expect(result.summary.newPatterns).toBe(0);
+    expect(result.summary.resolvedPatterns).toBe(0);
+    expect(result.summary.increasedPatterns).toBe(0);
+    expect(result.summary.decreasedPatterns).toBe(0);
+  });
+
+  it('should handle identical files (all patterns in bothFiles with 0% change)', () => {
+    const logs1: LogEntry[] = [
+      makeLog({ _id: 1, _severity: 3, _message: 'Error 1' }),
+      makeLog({ _id: 2, _severity: 3, _message: 'Error 2' }),
+      makeLog({ _id: 3, _severity: 2, _message: 'Warning 1' }),
+    ];
+    const logs2: LogEntry[] = [
+      makeLog({ _id: 10, _severity: 3, _message: 'Error 3' }),
+      makeLog({ _id: 11, _severity: 3, _message: 'Error 4' }),
+      makeLog({ _id: 12, _severity: 2, _message: 'Warning 2' }),
+    ];
+
+    const result = compareFiles(logs1, logs2);
+
+    expect(result.file1Only).toEqual([]);
+    expect(result.file2Only).toEqual([]);
+    expect(result.bothFiles).toHaveLength(2);
+    expect(result.bothFiles.every(b => b.change === 0)).toBe(true);
+    expect(result.summary.newPatterns).toBe(0);
+    expect(result.summary.resolvedPatterns).toBe(0);
+    expect(result.summary.increasedPatterns).toBe(0);
+    expect(result.summary.decreasedPatterns).toBe(0);
+  });
+
+  it('should only consider severity >= 2 logs (ignore verbose and info)', () => {
+    const logs1: LogEntry[] = [
+      makeLog({ _id: 1, _severity: 0, _message: 'Verbose message' }),
+      makeLog({ _id: 2, _severity: 1, _message: 'Info message' }),
+      makeLog({ _id: 3, _severity: 2, _message: 'Warning message' }),
+      makeLog({ _id: 4, _severity: 3, _message: 'Error message' }),
+    ];
+    const logs2: LogEntry[] = [
+      makeLog({ _id: 10, _severity: 0, _message: 'Verbose message 2' }),
+      makeLog({ _id: 11, _severity: 1, _message: 'Info message 2' }),
+    ];
+
+    const result = compareFiles(logs1, logs2);
+
+    // Only severity >= 2 should be considered
+    expect(result.file1Only).toHaveLength(2);
+    expect(result.file2Only).toEqual([]);
+    const file1Messages = result.file1Only.map(p => p.normalized);
+    expect(file1Messages).toContain('Warning message');
+    expect(file1Messages).toContain('Error message');
+    expect(file1Messages).not.toContain('Verbose message');
+    expect(file1Messages).not.toContain('Info message');
+  });
+
+  it('should group by normalized message (numbers, GUIDs replaced)', () => {
+    const logs1: LogEntry[] = [
+      makeLog({ _id: 1, _severity: 3, _message: 'Request 550e8400-e29b-41d4-a716-446655440000 failed after 100 ms' }),
+      makeLog({ _id: 2, _severity: 3, _message: 'Request 123e4567-e89b-12d3-a456-426614174000 failed after 200 ms' }),
+      makeLog({ _id: 3, _severity: 3, _message: 'Request 987e6543-e21b-32d1-b654-426614174999 failed after 300 ms' }),
+    ];
+    const logs2: LogEntry[] = [
+      makeLog({ _id: 10, _severity: 3, _message: 'Request aabbccdd-1234-5678-9abc-def012345678 failed after 150 ms' }),
+      makeLog({ _id: 11, _severity: 3, _message: 'Request 11223344-5566-7788-99aa-bbccddeeff00 failed after 250 ms' }),
+    ];
+
+    const result = compareFiles(logs1, logs2);
+
+    // All should be grouped as the same pattern after normalization
+    expect(result.file1Only).toEqual([]);
+    expect(result.file2Only).toEqual([]);
+    expect(result.bothFiles).toHaveLength(1);
+    expect(result.bothFiles[0].pattern.normalized).toBe('Request <GUID> failed after <NUM> ms');
+    expect(result.bothFiles[0].file1Count).toBe(3);
+    expect(result.bothFiles[0].file2Count).toBe(2);
+  });
+});
+
+// =============================================================================
 // getSeverityLabel
 // =============================================================================
 describe('getSeverityLabel', () => {
@@ -672,8 +964,11 @@ describe('getSeverityLabel', () => {
     expect(getSeverityLabel(3)).toBe('Error');
   });
 
+  it('should return "Critical" for severity 4', () => {
+    expect(getSeverityLabel(4)).toBe('Critical');
+  });
+
   it('should return "Unknown" for out-of-range positive value', () => {
-    expect(getSeverityLabel(4)).toBe('Unknown');
     expect(getSeverityLabel(99)).toBe('Unknown');
   });
 
@@ -702,8 +997,11 @@ describe('getSeverityColor', () => {
     expect(getSeverityColor(3)).toBe('#ef4444');
   });
 
+  it('should return orange (#f97316) for severity 4 (Critical)', () => {
+    expect(getSeverityColor(4)).toBe('#f97316');
+  });
+
   it('should return default gray (#6b7280) for out-of-range value', () => {
-    expect(getSeverityColor(4)).toBe('#6b7280');
     expect(getSeverityColor(-1)).toBe('#6b7280');
     expect(getSeverityColor(100)).toBe('#6b7280');
   });
